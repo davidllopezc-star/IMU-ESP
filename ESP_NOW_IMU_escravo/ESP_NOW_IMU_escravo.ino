@@ -11,31 +11,34 @@
 #endif
 
 // ====== DESTINO: MAC del MAESTRO (STA) ======
-uint8_t slaveAddress[] = {0x94,0xE6,0x86,0x3D,0x52,0x80};
+uint8_t masterAddress[] = {0x94,0xE6,0x86,0x3B,0x9B,0xB4};
 
 // ====== CANAL del AP donde está el maestro ======
 #define CANAL_WIFI 9
 
-// ====== Payload ======
-typedef struct parametros {
+// ====== Payload (DEBE SER IGUAL al del maestro) ======
+typedef struct __attribute__((packed)) {
+  uint32_t t_ms;     // <-- NUEVO: timestamp en ms (del esclavo)
   float GIRO_X1;
   float GIRO_Y1;
   float GIRO_Z1;
   float ACEL_X1;
   float ACEL_Y1;
   float ACEL_Z1;
-} parametros;
+} parametros_t;
 
-parametros IMUData;
+parametros_t IMUData;
 
 // ====== Callback envío (IDF5 vs IDF4) ======
 #if ESP_IDF_VERSION_MAJOR >= 5
 void OnSent(const wifi_tx_info_t* info, esp_now_send_status_t status) {
+  (void)info;
   Serial.print("Send message status:\t");
   Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Sent Successfully" : "Sent Failed");
 }
 #else
 void OnSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  (void)mac_addr;
   Serial.print("Send message status:\t");
   Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Sent Successfully" : "Sent Failed");
 }
@@ -47,8 +50,8 @@ MPU6050 mpu;
 float fator_giro = 16.4;          // 2000 dps
 float fator_aceleracao = 8192.0;  // 4g
 
-long tempo_anterior_mqtt = 0;
-long intervalo_mqtt = 20;         // 50 Hz
+long tempo_anterior_send = 0;
+long intervalo_send = 20;         // 50 Hz
 
 #define OUTPUT_READABLE_REALACCEL
 #define INTERRUPT_PIN 2
@@ -111,9 +114,9 @@ void setup() {
   esp_now_register_send_cb(OnSent);
 
   // Si el peer ya existe, borrarlo
-  if (esp_now_is_peer_exist(slaveAddress)) {
+  if (esp_now_is_peer_exist(masterAddress)) {
     Serial.println("Peer existed -> deleting...");
-    esp_err_t de = esp_now_del_peer(slaveAddress);
+    esp_err_t de = esp_now_del_peer(masterAddress);
     Serial.print("del_peer: "); Serial.print((int)de);
     Serial.print(" "); Serial.println(esp_err_to_name(de));
   }
@@ -121,7 +124,7 @@ void setup() {
   // Agregar peer (maestro)
   esp_now_peer_info_t peer;
   memset(&peer, 0, sizeof(peer));
-  memcpy(peer.peer_addr, slaveAddress, 6);
+  memcpy(peer.peer_addr, masterAddress, 6);
   peer.channel = CANAL_WIFI;
   peer.encrypt = false;
 #if ESP_IDF_VERSION_MAJOR >= 5
@@ -134,12 +137,12 @@ void setup() {
   if (ae != ESP_OK) return;
 
   Serial.print("peer exist now? ");
-  Serial.println(esp_now_is_peer_exist(slaveAddress) ? "YES" : "NO");
+  Serial.println(esp_now_is_peer_exist(masterAddress) ? "YES" : "NO");
 
   // ===== I2C =====
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
   Wire.begin();
-  Wire.setClock(100000); // más robusto que 400k en protoboard/cables largos
+  Wire.setClock(100000); // robusto en cables largos
 #endif
 
   while (!Serial);
@@ -150,7 +153,7 @@ void setup() {
   pinMode(INTERRUPT_PIN, INPUT);
 
   Serial.println(F("Testing device connections..."));
-  Serial.println(mpu.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
+  Serial.println(mpu.testConnection() ? F("MPU6050 OK") : F("MPU6050 FAIL"));
 
   delay(2000);
 
@@ -166,7 +169,6 @@ void setup() {
   mpu.setZAccelOffset(3316.0);
 
   if (devStatus == 0) {
-    // (opcional) calibrar
     mpu.CalibrateAccel(6);
     mpu.CalibrateGyro(6);
     mpu.PrintActiveOffsets();
@@ -180,7 +182,7 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
     mpuIntStatus = mpu.getIntStatus();
 
-    Serial.println(F("DMP ready! Waiting for first interrupt..."));
+    Serial.println(F("DMP ready."));
     dmpReady = true;
 
     packetSize = mpu.dmpGetFIFOPacketSize();
@@ -213,10 +215,13 @@ void loop() {
 #endif
 
     unsigned long tempo_atual = millis();
-    if (tempo_atual - tempo_anterior_mqtt > intervalo_mqtt) {
-      tempo_anterior_mqtt = tempo_atual;
+    if (tempo_atual - tempo_anterior_send > intervalo_send) {
+      tempo_anterior_send = tempo_atual;
 
-      esp_err_t result = esp_now_send(slaveAddress, (uint8_t*)&IMUData, sizeof(IMUData));
+      // ====== NUEVO: timestamp dentro del paquete ======
+      IMUData.t_ms = tempo_atual;
+
+      esp_err_t result = esp_now_send(masterAddress, (uint8_t*)&IMUData, sizeof(IMUData));
       if (result != ESP_OK) {
         Serial.print("esp_now_send ERR = ");
         Serial.print((int)result);
