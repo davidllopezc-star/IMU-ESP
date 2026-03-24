@@ -14,10 +14,20 @@
 uint8_t slaveAddress[] = {0x94,0xE6,0x86,0x3D,0x52,0x80};
 
 // ====== CANAL del AP donde está el maestro ======
-#define CANAL_WIFI 9
+#define CANAL_WIFI 4
 
 // ====== Payload ======
-typedef struct parametros {
+/*typedef struct parametros {
+  float GIRO_X1;
+  float GIRO_Y1;
+  float GIRO_Z1;
+  float ACEL_X1;
+  float ACEL_Y1;
+  float ACEL_Z1;
+} parametros;*/
+
+typedef struct __attribute__((packed)) {
+  uint32_t t_ms;
   float GIRO_X1;
   float GIRO_Y1;
   float GIRO_Z1;
@@ -28,16 +38,34 @@ typedef struct parametros {
 
 parametros IMUData;
 
+// ====== Control TX ======
+volatile bool txBusy = false;
+volatile uint32_t txOk = 0;
+volatile uint32_t txFail = 0;
+uint32_t lastStats = 0;
+
 // ====== Callback envío (IDF5 vs IDF4) ======
 #if ESP_IDF_VERSION_MAJOR >= 5
 void OnSent(const wifi_tx_info_t* info, esp_now_send_status_t status) {
-  Serial.print("Send message status:\t");
-  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Sent Successfully" : "Sent Failed");
+  (void)info;
+  txBusy = false;
+
+  if (status == ESP_NOW_SEND_SUCCESS) {
+    txOk++;
+  } else {
+    txFail++;
+  }
 }
 #else
 void OnSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  Serial.print("Send message status:\t");
-  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Sent Successfully" : "Sent Failed");
+  (void)mac_addr;
+  txBusy = false;
+
+  if (status == ESP_NOW_SEND_SUCCESS) {
+    txOk++;
+  } else {
+    txFail++;
+  }
 }
 #endif
 
@@ -49,6 +77,7 @@ float fator_aceleracao = 8192.0;  // 4g
 
 long tempo_anterior_mqtt = 0;
 long intervalo_mqtt = 20;         // 50 Hz
+// Si sigue fallando, prueba 30 ms primero
 
 #define OUTPUT_READABLE_REALACCEL
 #define INTERRUPT_PIN 2
@@ -82,19 +111,16 @@ void setup() {
   Serial.begin(115200);
   delay(200);
 
-  // ===== WiFi STA (solo para fijar canal/radio) =====
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
 #if ESP_IDF_VERSION_MAJOR >= 5
   esp_wifi_set_ps(WIFI_PS_NONE);
 #endif
 
-  // Forzar canal
   esp_err_t cherr = esp_wifi_set_channel(CANAL_WIFI, WIFI_SECOND_CHAN_NONE);
   Serial.print("set_channel err="); Serial.print((int)cherr);
   Serial.print(" "); Serial.println(esp_err_to_name(cherr));
 
-  // Leer canal real
   uint8_t primary = 0;
   wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
   esp_wifi_get_channel(&primary, &second);
@@ -102,7 +128,6 @@ void setup() {
 
   Serial.print("SLAVE MAC: "); Serial.println(WiFi.macAddress());
 
-  // ===== ESP-NOW init =====
   esp_err_t e = esp_now_init();
   Serial.print("esp_now_init: "); Serial.print((int)e);
   Serial.print(" "); Serial.println(esp_err_to_name(e));
@@ -110,7 +135,6 @@ void setup() {
 
   esp_now_register_send_cb(OnSent);
 
-  // Si el peer ya existe, borrarlo
   if (esp_now_is_peer_exist(slaveAddress)) {
     Serial.println("Peer existed -> deleting...");
     esp_err_t de = esp_now_del_peer(slaveAddress);
@@ -118,7 +142,6 @@ void setup() {
     Serial.print(" "); Serial.println(esp_err_to_name(de));
   }
 
-  // Agregar peer (maestro)
   esp_now_peer_info_t peer;
   memset(&peer, 0, sizeof(peer));
   memcpy(peer.peer_addr, slaveAddress, 6);
@@ -136,15 +159,13 @@ void setup() {
   Serial.print("peer exist now? ");
   Serial.println(esp_now_is_peer_exist(slaveAddress) ? "YES" : "NO");
 
-  // ===== I2C =====
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
   Wire.begin();
-  Wire.setClock(100000); // más robusto que 400k en protoboard/cables largos
+  Wire.setClock(100000);
 #endif
 
   while (!Serial);
 
-  // ===== MPU init =====
   Serial.println(F("Initializing I2C devices..."));
   mpu.initialize();
   pinMode(INTERRUPT_PIN, INPUT);
@@ -157,7 +178,6 @@ void setup() {
   Serial.println(F("Initializing DMP..."));
   devStatus = mpu.dmpInitialize();
 
-  // offsets (los tuyos)
   mpu.setXGyroOffset(55.0);
   mpu.setYGyroOffset(-21.0);
   mpu.setZGyroOffset(-11.0);
@@ -166,7 +186,6 @@ void setup() {
   mpu.setZAccelOffset(3316.0);
 
   if (devStatus == 0) {
-    // (opcional) calibrar
     mpu.CalibrateAccel(6);
     mpu.CalibrateGyro(6);
     mpu.PrintActiveOffsets();
@@ -213,16 +232,37 @@ void loop() {
 #endif
 
     unsigned long tempo_atual = millis();
-    if (tempo_atual - tempo_anterior_mqtt > intervalo_mqtt) {
+    if (tempo_atual - tempo_anterior_mqtt >= intervalo_mqtt) {
       tempo_anterior_mqtt = tempo_atual;
 
-      esp_err_t result = esp_now_send(slaveAddress, (uint8_t*)&IMUData, sizeof(IMUData));
-      if (result != ESP_OK) {
-        Serial.print("esp_now_send ERR = ");
-        Serial.print((int)result);
-        Serial.print(" ");
-        Serial.println(esp_err_to_name(result));
+      if (!txBusy) {
+        IMUData.t_ms = tempo_atual; 
+        txBusy = true;
+
+        esp_err_t result = esp_now_send(slaveAddress, (uint8_t*)&IMUData, sizeof(IMUData));
+        if (result != ESP_OK) {
+          txBusy = false;
+          txFail++;
+
+          Serial.print("esp_now_send ERR = ");
+          Serial.print((int)result);
+          Serial.print(" ");
+          Serial.println(esp_err_to_name(result));
+        }
       }
     }
+  }
+
+  if (millis() - lastStats >= 1000) {
+    lastStats = millis();
+    Serial.print("TX ok/s = ");
+    Serial.print(txOk);
+    Serial.print(" | TX fail/s = ");
+    Serial.print(txFail);
+    Serial.print(" | txBusy = ");
+    Serial.println(txBusy ? "1" : "0");
+
+    txOk = 0;
+    txFail = 0;
   }
 }

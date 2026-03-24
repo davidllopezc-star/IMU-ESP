@@ -15,7 +15,17 @@
 // =====================================================
 // ===== ESP-NOW: struct + variables ANTES callback =====
 // =====================================================
-typedef struct parametros {
+/*typedef struct parametros {
+  float GIRO_X1;
+  float GIRO_Y1;
+  float GIRO_Z1;
+  float ACEL_X1;
+  float ACEL_Y1;
+  float ACEL_Z1;
+} parametros;*/
+
+typedef struct __attribute__((packed)) {
+  uint32_t t_ms;
   float GIRO_X1;
   float GIRO_Y1;
   float GIRO_Z1;
@@ -260,79 +270,80 @@ void setup() {
 // ======================== loop ========================
 // =====================================================
 void loop() {
-  char TIMESTAMP_str[12] = {0};
-  char ACEL_X_str[12] = {0};
-  char ACEL_Y_str[12] = {0};
-  char ACEL_Z_str[12] = {0};
-  char GIRO_X_str[12] = {0};
-  char GIRO_Y_str[12] = {0};
-  char GIRO_Z_str[12] = {0};
+  //char TIMESTAMP_str[12] = {0};
+  //char ACEL_X_str[12] = {0};
+  //char ACEL_Y_str[12] = {0};
+  //char ACEL_Z_str[12] = {0};
+  //char GIRO_X_str[12] = {0};
+  //char GIRO_Y_str[12] = {0};
+  //char GIRO_Z_str[12] = {0};
 
-  char ACEL_X1_str[12] = {0};
-  char ACEL_Y1_str[12] = {0};
-  char ACEL_Z1_str[12] = {0};
-  char GIRO_X1_str[12] = {0};
-  char GIRO_Y1_str[12] = {0};
-  char GIRO_Z1_str[12] = {0};
+  //char ACEL_X1_str[12] = {0};
+  //char ACEL_Y1_str[12] = {0};
+  //char ACEL_Z1_str[12] = {0};
+  //char GIRO_X1_str[12] = {0};
+  //char GIRO_Y1_str[12] = {0};
+  //char GIRO_Z1_str[12] = {0};
 
-  if (!dmpReady) return;
+  //if (!dmpReady) return;
 
-  if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) {
-#ifdef OUTPUT_READABLE_REALACCEL
-    mpu.dmpGetQuaternion(&q, fifoBuffer);
-    mpu.dmpGetAccel(&aa, fifoBuffer);
-    mpu.dmpGetGyro(&giro, fifoBuffer);
-    mpu.dmpGetGravity(&gravity, &q);
-    mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
-#endif
+  //if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) {
+//#ifdef OUTPUT_READABLE_REALACCEL
+    //mpu.dmpGetQuaternion(&q, fifoBuffer);
+    //mpu.dmpGetAccel(&aa, fifoBuffer);
+    //mpu.dmpGetGyro(&giro, fifoBuffer);
+    //mpu.dmpGetGravity(&gravity, &q);
+    //mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
+//#endif
 
     VerificaConexoesWiFIEMQTT();
     MQTT.loop();
 
-    sprintf(TIMESTAMP_str,"%.6f", faz_leitura_TIMESTAMP());
-    sprintf(ACEL_X_str,"%.6f", faz_leitura_ACEL_X());
-    sprintf(ACEL_Y_str,"%.6f", faz_leitura_ACEL_Y());
-    sprintf(ACEL_Z_str,"%.6f", faz_leitura_ACEL_Z());
-    sprintf(GIRO_X_str,"%.6f", faz_leitura_GIRO_X());
-    sprintf(GIRO_Y_str,"%.6f", faz_leitura_GIRO_Y());
-    sprintf(GIRO_Z_str,"%.6f", faz_leitura_GIRO_Z());
+    //sprintf(TIMESTAMP_str,"%.6f", faz_leitura_TIMESTAMP());
+    //sprintf(ACEL_X_str,"%.6f", faz_leitura_ACEL_X());
+    //sprintf(ACEL_Y_str,"%.6f", faz_leitura_ACEL_Y());
+    //sprintf(ACEL_Z_str,"%.6f", faz_leitura_ACEL_Z());
+    //sprintf(GIRO_X_str,"%.6f", faz_leitura_GIRO_X());
+    //sprintf(GIRO_Y_str,"%.6f", faz_leitura_GIRO_Y());
+    //sprintf(GIRO_Z_str,"%.6f", faz_leitura_GIRO_Z());
 
-    sprintf(ACEL_X1_str,"%.6f", IMUData.ACEL_X1);
-    sprintf(ACEL_Y1_str,"%.6f", IMUData.ACEL_Y1);
-    sprintf(ACEL_Z1_str,"%.6f", IMUData.ACEL_Z1);
-    sprintf(GIRO_X1_str,"%.6f", IMUData.GIRO_X1);
-    sprintf(GIRO_Y1_str,"%.6f", IMUData.GIRO_Y1);
-    sprintf(GIRO_Z1_str,"%.6f", IMUData.GIRO_Z1);
+    //sprintf(ACEL_X1_str,"%.6f", IMUData.ACEL_X1);
+    //sprintf(ACEL_Y1_str,"%.6f", IMUData.ACEL_Y1);
+    //sprintf(ACEL_Z1_str,"%.6f", IMUData.ACEL_Z1);
+    //sprintf(GIRO_X1_str,"%.6f", IMUData.GIRO_X1);
+    //sprintf(GIRO_Y1_str,"%.6f", IMUData.GIRO_Y1);
+    //sprintf(GIRO_Z1_str,"%.6f", IMUData.GIRO_Z1);
 
-    unsigned long tempo_atual_mqtt = millis();
-    if (dados_recebidos && (tempo_atual_mqtt - tempo_anterior_mqtt > (unsigned long)intervalo_mqtt)) {
-      dados_recebidos = false;
-      tempo_anterior_mqtt = tempo_atual_mqtt;
+unsigned long tempo_atual_mqtt = millis();
+if (dados_recebidos && (tempo_atual_mqtt - tempo_anterior_mqtt > (unsigned long)intervalo_mqtt)) {
+  parametros localData;
 
-      StaticJsonDocument<300> doc;
-      char buffer[200];
+  noInterrupts();
+  memcpy(&localData, (const void*)&IMUData, sizeof(localData));
+  dados_recebidos = false;
+  interrupts();
 
-      JsonArray data = doc.createNestedArray("data");
-      data.add(TIMESTAMP_str);
-      data.add(GIRO_X_str);
-      data.add(GIRO_Y_str);
-      data.add(GIRO_Z_str);
-      data.add(ACEL_X_str);
-      data.add(ACEL_Y_str);
-      data.add(ACEL_Z_str);
+  tempo_anterior_mqtt = tempo_atual_mqtt;
 
-      data.add(GIRO_X1_str);
-      data.add(GIRO_Y1_str);
-      data.add(GIRO_Z1_str);
-      data.add(ACEL_X1_str);
-      data.add(ACEL_Y1_str);
-      data.add(ACEL_Z1_str);
+  StaticJsonDocument<300> doc;
+  char buffer[200];
 
-      serializeJson(doc, buffer);
-      MQTT.publish(ifsp_gru_IMU6050, buffer);
-      Serial.println(buffer);
+  doc["src"] = "slave1";
+  doc["t_ms"] = localData.t_ms;
 
-      digitalWrite(LED_PIN, !digitalRead(LED_PIN));
-    }
-  }
+  JsonArray data = doc.createNestedArray("data");
+  data.add(localData.GIRO_X1);
+  data.add(localData.GIRO_Y1);
+  data.add(localData.GIRO_Z1);
+  data.add(localData.ACEL_X1);
+  data.add(localData.ACEL_Y1);
+  data.add(localData.ACEL_Z1);
+
+  serializeJson(doc, buffer);
+  MQTT.publish(ifsp_gru_IMU6050, buffer);
+  Serial.println(buffer);
+
+  digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+}
+  //}
 }
